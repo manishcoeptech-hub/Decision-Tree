@@ -4,23 +4,22 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 
-# ---------------------------------------------------------
-# Page Setup
-# ---------------------------------------------------------
 st.set_page_config(page_title="ID3 Decision Tree Simulator",
                    layout="wide")
 
-st.title("🌳 ID3 Decision Tree — Step-by-Step Simulator (Weather Dataset)")
+st.title("🌳 ID3 Decision Tree — Step-by-Step Simulation (Auto-Layout Tree)")
 
-# ---------------------------------------------------------
-# Utility: Entropy
-# ---------------------------------------------------------
+# ============================================================
+# ENTROPY FUNCTION
+# ============================================================
 def entropy(counts):
     """
-    counts: dict like {"Yes": 9, "No": 5}
-    returns Shannon Entropy
+    counts = dict {"Yes": 9, "No": 5}
+    Returns Shannon entropy.
     """
     total = sum(counts.values())
+    if total == 0:
+        return 0
     ent = 0
     for c in counts.values():
         if c > 0:
@@ -28,70 +27,121 @@ def entropy(counts):
             ent -= p * math.log2(p)
     return ent
 
-# ---------------------------------------------------------
-# Utility: Information Gain
-# ---------------------------------------------------------
+
+# ============================================================
+# INFORMATION GAIN CALCULATION
+# ============================================================
 def compute_information_gain(df, feature, target="play"):
     """
-    df: dataframe with categorical features
-    feature: column name to split on
-    returns:
-        parent_entropy,
-        weighted_entropy,
-        IG,
-        subsets (dict of v -> subset df)
+    Computes:
+      - parent entropy
+      - weighted entropy
+      - information gain
+      - subsets for each value
     """
     parent_counts = df[target].value_counts().to_dict()
     parent_entropy = entropy(parent_counts)
 
-    values = df[feature].unique()
-    weighted_entropy = 0
     subsets = {}
+    weighted_entropy = 0
 
-    for v in values:
-        subset = df[df[feature] == v]
-        subsets[v] = subset
+    for val in df[feature].unique():
+        subset = df[df[feature] == val]
+        subsets[val] = subset
+
         subset_counts = subset[target].value_counts().to_dict()
         weighted_entropy += (len(subset) / len(df)) * entropy(subset_counts)
 
     IG = parent_entropy - weighted_entropy
     return parent_entropy, weighted_entropy, IG, subsets
 
-# ---------------------------------------------------------
-# Utility: Draw Compact Tree Diagram
-# ---------------------------------------------------------
-def draw_tree(nodes, edges, title="Decision Tree"):
+
+# ============================================================
+# AUTO-LAYOUT TREE DRAWING ENGINE
+# ============================================================
+def compute_positions(tree, x=0.5, y=1.0, level_gap=0.18):
     """
-    nodes: dict {id: {"x":float, "y":float, "text":str}}
-    edges: list of tuples (parent_id, child_id)
+    Recursively compute x/y positions for auto-spaced tree.
+
+    tree = {
+       "node_id": {
+          "text": "...",
+          "children": ["child1", "child2"]
+       }
+    }
+
+    Returns dict positions[node_id] = (x,y)
     """
-    fig, ax = plt.subplots(figsize=(11, 6))
-    ax.set_title(title, fontsize=16)
+    positions = {}
+
+    def dfs(node, depth, offset):
+        children = tree[node].get("children", [])
+        positions[node] = (offset, 1 - depth * level_gap)
+
+        if len(children) == 0:
+            return 1
+
+        total_width = 0
+        child_widths = []
+
+        for child in children:
+            w = dfs(child, depth + 1, offset)
+            child_widths.append(w)
+            offset += w
+            total_width += w
+
+        # Recenter children under parent
+        if total_width > 0:
+            parent_x = sum(positions[c][0] for c in children) / len(children)
+            y = positions[node][1]
+            positions[node] = (parent_x, y)
+
+        return total_width
+
+    dfs("root", 0, x)
+    return positions
+
+
+def draw_auto_tree(tree, title="Decision Tree"):
+    """
+    Draw tree with automatically spaced nodes.
+    tree must contain:
+        tree[node_id]["text"]
+        tree[node_id]["children"]
+    """
+    positions = compute_positions(tree)
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+    ax.set_title(title, fontsize=18)
     ax.axis("off")
 
-    # Draw edges
-    for (p, c) in edges:
-        x1, y1 = nodes[p]["x"], nodes[p]["y"]
-        x2, y2 = nodes[c]["x"], nodes[c]["y"]
-        ax.plot([x1, x2], [y1, y2], color="black")
+    # Draw edges first
+    for node, data in tree.items():
+        for child in data.get("children", []):
+            x1, y1 = positions[node]
+            x2, y2 = positions[child]
+            ax.plot([x1, x2], [y1, y2], color="black")
 
     # Draw nodes
-    for node_id, node in nodes.items():
-        ax.text(node["x"], node["y"], node["text"],
-                ha="center", va="center", fontsize=10,
-                bbox=dict(boxstyle="round,pad=0.3",
-                          facecolor="#eef",
-                          edgecolor="black"))
+    for node, (x, y) in positions.items():
+        text = tree[node]["text"]
+        ax.text(
+            x, y, text,
+            ha="center", va="center",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.3",
+                      facecolor="#eef",
+                      edgecolor="black")
+        )
 
     return fig
 
-# ---------------------------------------------------------
-# Initialize Session State
-# ---------------------------------------------------------
+# ============================================================
+# SESSION STATE INITIALIZATION
+# ============================================================
 if "step" not in st.session_state:
     st.session_state.step = 1
 
-# Information Gain memory
 if "ig_root" not in st.session_state:
     st.session_state.ig_root = {}
 
@@ -101,7 +151,16 @@ if "ig_sunny" not in st.session_state:
 if "ig_rain" not in st.session_state:
     st.session_state.ig_rain = {}
 
-# Navigation
+if "subsets" not in st.session_state:
+    st.session_state.subsets = {}
+
+if "root_feature" not in st.session_state:
+    st.session_state.root_feature = None
+
+
+# ============================================================
+# NAVIGATION BUTTONS
+# ============================================================
 def next_step():
     if st.session_state.step < 12:
         st.session_state.step += 1
@@ -110,244 +169,197 @@ def prev_step():
     if st.session_state.step > 1:
         st.session_state.step -= 1
 
-# ---------------------------------------------------------
-# File Upload
-# ---------------------------------------------------------
+
+# ============================================================
+# FILE UPLOAD SECTION
+# ============================================================
 uploaded = st.file_uploader(
-    "Upload Weather CSV (Outlook, Temperature, Humidity, Windy, Play)",
+    "📄 Upload Weather Dataset (Outlook, Temperature, Humidity, Windy, Play)",
     type=["csv"]
 )
 
 if not uploaded:
-    st.warning("Please upload the dataset to begin.")
+    st.warning("Please upload a CSV file to begin.")
     st.stop()
 
 df = pd.read_csv(uploaded)
 df.columns = df.columns.str.strip().str.lower()
 
-required = ["outlook", "temperature", "humidity", "windy", "play"]
-if not all(col in df.columns for col in required):
-    st.error("CSV must contain: Outlook, Temperature, Humidity, Windy, Play")
+required_cols = ["outlook", "temperature", "humidity", "windy", "play"]
+
+if not all(col in df.columns for col in required_cols):
+    st.error(f"CSV must contain these columns: {required_cols}")
     st.stop()
 
-# ---------------------------------------------------------
-# STEP ENGINE — Display Current Step
-# ---------------------------------------------------------
+
+# ============================================================
+# STEP ENGINE
+# ============================================================
 step = st.session_state.step
 st.subheader(f"🪜 Step {step} of 12")
 
-# ---------------------------------------------------------
+
+# ============================================================
 # STEP 1 — Parent Entropy
-# ---------------------------------------------------------
+# ============================================================
 if step == 1:
-    st.markdown("## 📌 Step 1 — Compute Parent Entropy (Target = Play)")
-    st.markdown("""
-    We begin by measuring the impurity of the entire dataset using **Shannon Entropy**.
-    
-    Formula:
-    """)
-    st.latex(r"H(S) = -\sum p_i \log_2(p_i)")
-    
+    st.markdown("## 📌 Step 1 — Compute Parent Entropy")
+
     counts = df["play"].value_counts().to_dict()
     st.write("### Class Counts:", counts)
 
     parent_ent = entropy(counts)
-
     st.write(f"### 👉 Parent Entropy = **{parent_ent:.4f}**")
-    st.info("A high entropy means the data is impure and needs splitting.")
 
-# ---------------------------------------------------------
-# Features for root-level IG
-# ---------------------------------------------------------
+    st.info("Entropy measures dataset impurity. Next, we compute Information Gain for each feature.")
+
+
+# ============================================================
+# FEATURES FOR ROOT
+# ============================================================
 features = ["outlook", "temperature", "humidity", "windy"]
 
-# ---------------------------------------------------------
+
+# ============================================================
 # STEP 2 — IG for Outlook
-# ---------------------------------------------------------
+# ============================================================
 if step == 2:
-    feature = "outlook"
-    st.markdown(f"## 📌 Step 2 — Compute Information Gain for **{feature.title()}**")
+    st.markdown("## 📌 Step 2 — Information Gain for **Outlook**")
 
-    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, feature)
+    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, "outlook")
+    st.session_state.ig_root["outlook"] = IG
 
-    # Store result
-    st.session_state.ig_root[feature] = IG
+    st.write("### Subset Entropies")
 
-    st.write("### Subset Entropies:")
-    for val, subset in subsets.items():
+    for value, subset in subsets.items():
         c = subset["play"].value_counts().to_dict()
-        st.write(f"**{val}** → {c}, Entropy = {entropy(c):.4f}")
+        st.write(f"- **{value}** → {c}, Entropy = {entropy(c):.4f}")
 
     st.write("---")
     st.write(f"Weighted Entropy = **{weighted_entropy:.4f}**")
-    st.write(f"### 👉 IG({feature.title()}) = **{IG:.4f}**")
+    st.write(f"### 👉 IG(Outlook) = **{IG:.4f}**")
 
-    st.info("Information Gain tells how much uncertainty is reduced by splitting on this feature.")
 
-# ---------------------------------------------------------
+# ============================================================
 # STEP 3 — IG for Temperature
-# ---------------------------------------------------------
+# ============================================================
 if step == 3:
-    feature = "temperature"
-    st.markdown(f"## 📌 Step 3 — Compute Information Gain for **{feature.title()}**")
+    st.markdown("## 📌 Step 3 — Information Gain for **Temperature**")
 
-    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, feature)
-    st.session_state.ig_root[feature] = IG
+    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, "temperature")
+    st.session_state.ig_root["temperature"] = IG
 
-    st.write("### Subset Entropies:")
-    for val, subset in subsets.items():
+    st.write("### Subset Entropies")
+
+    for value, subset in subsets.items():
         c = subset["play"].value_counts().to_dict()
-        st.write(f"**{val}** → {c}, Entropy = {entropy(c):.4f}")
+        st.write(f"- **{value}** → {c}, Entropy = {entropy(c):.4f}")
 
     st.write("---")
     st.write(f"Weighted Entropy = **{weighted_entropy:.4f}**")
-    st.write(f"### 👉 IG({feature.title()}) = **{IG:.4f}**")
+    st.write(f"### 👉 IG(Temperature) = **{IG:.4f}**")
 
-# ---------------------------------------------------------
+
+# ============================================================
 # STEP 4 — IG for Humidity
-# ---------------------------------------------------------
+# ============================================================
 if step == 4:
-    feature = "humidity"
-    st.markdown(f"## 📌 Step 4 — Compute Information Gain for **{feature.title()}**")
+    st.markdown("## 📌 Step 4 — Information Gain for **Humidity**")
 
-    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, feature)
-    st.session_state.ig_root[feature] = IG
+    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, "humidity")
+    st.session_state.ig_root["humidity"] = IG
 
-    st.write("### Subset Entropies:")
-    for val, subset in subsets.items():
+    st.write("### Subset Entropies")
+
+    for value, subset in subsets.items():
         c = subset["play"].value_counts().to_dict()
-        st.write(f"**{val}** → {c}, Entropy = {entropy(c):.4f}")
+        st.write(f"- **{value}** → {c}, Entropy = {entropy(c):.4f}")
 
     st.write("---")
     st.write(f"Weighted Entropy = **{weighted_entropy:.4f}**")
-    st.write(f"### 👉 IG({feature.title()}) = **{IG:.4f}**")
+    st.write(f"### 👉 IG(Humidity) = **{IG:.4f}**")
 
-# ---------------------------------------------------------
+
+# ============================================================
 # STEP 5 — IG for Windy
-# ---------------------------------------------------------
+# ============================================================
 if step == 5:
-    feature = "windy"
-    st.markdown(f"## 📌 Step 5 — Compute Information Gain for **{feature.title()}**")
+    st.markdown("## 📌 Step 5 — Information Gain for **Windy**")
 
-    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, feature)
-    st.session_state.ig_root[feature] = IG
+    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, "windy")
+    st.session_state.ig_root["windy"] = IG
 
-    st.write("### Subset Entropies:")
-    for val, subset in subsets.items():
+    st.write("### Subset Entropies")
+
+    for value, subset in subsets.items():
         c = subset["play"].value_counts().to_dict()
-        st.write(f"**{val}** → {c}, Entropy = {entropy(c):.4f}")
+        st.write(f"- **{value}** → {c}, Entropy = {entropy(c):.4f}")
 
     st.write("---")
     st.write(f"Weighted Entropy = **{weighted_entropy:.4f}**")
-    st.write(f"### 👉 IG({feature.title()}) = **{IG:.4f}**")
+    st.write(f"### 👉 IG(Windy) = **{IG:.4f}**")
 
-    st.info("We have now computed IG for all 4 features. Next step: choose the root node.")
-
-# ---------------------------------------------------------
+# ============================================================
 # STEP 6 — Select Best Feature as Root Node
-# ---------------------------------------------------------
+# ============================================================
 if step == 6:
     st.markdown("## 📌 Step 6 — Select Best Feature (Root Node)")
-    st.markdown("""
-    Now that we have computed Information Gain for all four features,
-    we select the one with the **highest IG** to become the **root** of the tree.
-    """)
 
     IGs = st.session_state.ig_root
-    st.write("### Information Gains (from previous steps):")
+
+    st.write("### Information Gains Computed So Far:")
     st.write(IGs)
 
-    # Determine best feature
+    # Best feature
     root_feature = max(IGs, key=IGs.get)
     st.session_state.root_feature = root_feature
 
-    st.success(f"🎉 Best Feature = **{root_feature.title()}** — This becomes the root node.")
+    st.success(f"🎉 Best Feature = **{root_feature.title()}** (Root Node)")
 
-    # Draw root-only tree
-    nodes = {
-        "root": {
-            "text": f"{root_feature.title()}\nEntropy={entropy(df['play'].value_counts().to_dict()):.3f}",
-            "x": 0.5,
-            "y": 0.9
-        }
-    }
-    edges = []
-
-    fig = draw_tree(nodes, edges, "Root Node")
-    st.pyplot(fig)
-
-    st.info("A root node with high IG strongly reduces impurity, making it ideal for the first split.")
+    st.info("This feature has the maximum Information Gain, so it becomes the root of the tree.")
 
 
-# ---------------------------------------------------------
-# STEP 7 — Create Branches for Root Node
-# ---------------------------------------------------------
+# ============================================================
+# STEP 7 — Split Dataset into Branches Based on Root Feature
+# ============================================================
 if step == 7:
-    root_feature = st.session_state.root_feature
-    st.markdown(f"## 📌 Step 7 — Create Branches for Root Feature **{root_feature.title()}**")
-    st.markdown("""
-    We now split the dataset into branches based on the root feature.
-    
-    Each branch corresponds to a unique value of the root feature.
+    root = st.session_state.root_feature
+    st.markdown(f"## 📌 Step 7 — Split Data on Root Feature **{root.title()}**")
+
+    # Unique values become branches
+    branch_values = df[root].unique().tolist()
+    st.write("### Branch Values:", branch_values)
+
+    subsets = {}
+    for val in branch_values:
+        subset = df[df[root] == val]
+        subsets[val] = subset
+        st.write(f"### 👉 Branch '{val}' (Samples = {len(subset)})")
+        st.dataframe(subset)
+
+    st.session_state.subsets = subsets
+
+    st.info("""
+    Each unique value under the root feature creates a branch.
+    Next, we analyze the **Sunny** and **Rain** subsets to build the tree layer by layer.
     """)
 
-    # Unique values create branches
-    branches = df[root_feature].unique()
-    st.write("### Branch Values:", branches)
-
-    # Build partial tree structure
-    nodes = {
-        "root": {
-            "text": root_feature.title(),
-            "x": 0.5,
-            "y": 0.9
-        }
-    }
-
-    edges = []
-    x_positions = np.linspace(0.2, 0.8, len(branches))
-
-    # Save subsets for upcoming steps
-    st.session_state.subsets = {}
-
-    for i, val in enumerate(branches):
-        subset = df[df[root_feature] == val]
-        st.session_state.subsets[val] = subset
-
-        nodes[val] = {
-            "text": f"{val}\n(samples={len(subset)})",
-            "x": x_positions[i],
-            "y": 0.6
-        }
-        edges.append(("root", val))
-
-    fig = draw_tree(nodes, edges, "Root With Branches")
-    st.pyplot(fig)
-
-    st.info("Next, we will analyze the branch subsets (Sunny, Rain, Overcast) one by one.")
-# ---------------------------------------------------------
+# ============================================================
 # STEP 8 — Entropy of Sunny Subset
-# ---------------------------------------------------------
+# ============================================================
 if step == 8:
-    st.markdown("## 📌 Step 8 — Compute Entropy of 'Sunny' Subset")
-    st.markdown("""
-    We now analyze the **Sunny** branch.  
-    A node becomes *pure* when all labels are identical.  
-    If not pure, we must compute entropy to decide whether more splitting is needed.
-    """)
+    st.markdown("## 📌 Step 8 — Compute Entropy of **Sunny** Subset")
 
     subsets = st.session_state.subsets
-    sunny = None
 
-    # Handle case-insensitive matching ("Sunny", "sunny")
-    for key in subsets.keys():
-        if key.lower() == "sunny":
-            sunny = subsets[key]
+    # Locate Sunny subset (case-insensitive)
+    sunny_key = next((k for k in subsets if k.lower() == "sunny"), None)
+    sunny = subsets.get(sunny_key)
 
     if sunny is None:
-        st.error("Sunny subset not found in dataset. Ensure your 'Outlook' column has values like Sunny/Rain/Overcast.")
+        st.error("Sunny subset not found! Check if 'Outlook' contains 'Sunny' or similar values.")
     else:
-        st.write("### Sunny Subset Data")
+        st.write("### 🌞 Sunny Subset")
         st.dataframe(sunny)
 
         counts = sunny["play"].value_counts().to_dict()
@@ -357,29 +369,30 @@ if step == 8:
         st.write(f"### 👉 Entropy(Sunny) = **{ent_sunny:.4f}**")
 
         if ent_sunny == 0:
-            st.success("Sunny subset is already pure — no further splitting needed.")
+            st.success("Sunny subset is PURE — no further splitting needed.")
         else:
-            st.info("Sunny subset is NOT pure → we must compute IG for remaining features.")
+            st.info("Sunny subset is **not pure**, so we compute IG for its remaining features next.")
 
 
-# ---------------------------------------------------------
-# STEP 9 — IG for Sunny Subset (Humidity wins)
-# ---------------------------------------------------------
+# ============================================================
+# STEP 9 — IG inside Sunny Subset
+# ============================================================
 if step == 9:
-    st.markdown("## 📌 Step 9 — Compute Information Gain inside 'Sunny' Subset")
+    st.markdown("## 📌 Step 9 — Compute Information Gain for **Sunny** Branch")
 
     subsets = st.session_state.subsets
-    sunny = None
-    for key in subsets:
-        if key.lower() == "sunny":
-            sunny = subsets[key]
+    sunny_key = next((k for k in subsets if k.lower() == "sunny"), None)
+    sunny = subsets.get(sunny_key)
 
-    st.write("### Sunny Subset Data")
+    st.write("### 🌞 Sunny Subset Data")
     st.dataframe(sunny)
 
-    st.markdown("### Remaining Features: Temperature, Humidity, Windy")
-    features_remaining = ["temperature", "humidity", "windy"]
+    st.markdown("### Remaining Features to Evaluate:")
+    st.write("- Temperature")
+    st.write("- Humidity")
+    st.write("- Windy")
 
+    features_remaining = ["temperature", "humidity", "windy"]
     IG_sunny = {}
 
     for f in features_remaining:
@@ -388,29 +401,24 @@ if step == 9:
 
     st.session_state.ig_sunny = IG_sunny
 
-    st.write("### Information Gains inside Sunny Subset:")
+    st.write("### Information Gains in Sunny Subset:")
     st.write(IG_sunny)
 
-    best_feature = max(IG_sunny, key=IG_sunny.get)
-    st.success(f"🎉 Best Split for Sunny = **{best_feature.title()}**")
-
-    st.info("This feature gives maximum reduction in impurity for the Sunny branch.")
+    best = max(IG_sunny, key=IG_sunny.get)
+    st.success(f"🎉 Best Feature for Sunny = **{best.title()}**")
 
 
-# ---------------------------------------------------------
+# ============================================================
 # STEP 10 — Entropy of Rain Subset
-# ---------------------------------------------------------
+# ============================================================
 if step == 10:
-    st.markdown("## 📌 Step 10 — Compute Entropy of 'Rain' Subset")
+    st.markdown("## 📌 Step 10 — Compute Entropy of **Rain** Subset")
 
     subsets = st.session_state.subsets
+    rain_key = next((k for k in subsets if k.lower() == "rain"), None)
+    rain = subsets.get(rain_key)
 
-    rain = None
-    for key in subsets:
-        if key.lower() == "rain":
-            rain = subsets[key]
-
-    st.write("### Rain Subset Data")
+    st.write("### 🌧 Rain Subset")
     st.dataframe(rain)
 
     counts = rain["play"].value_counts().to_dict()
@@ -420,25 +428,22 @@ if step == 10:
     st.write(f"### 👉 Entropy(Rain) = **{ent_rain:.4f}**")
 
     if ent_rain == 0:
-        st.success("Rain subset is pure — no further splitting needed.")
+        st.success("Rain subset is PURE — no further splitting needed.")
     else:
-        st.info("Rain subset is NOT pure → we compute IG next.")
+        st.info("Rain subset is **not pure**, so we compute IG next.")
 
 
-# ---------------------------------------------------------
-# STEP 11 — IG for Rain Subset (Windy wins)
-# ---------------------------------------------------------
+# ============================================================
+# STEP 11 — IG inside Rain Subset
+# ============================================================
 if step == 11:
-    st.markdown("## 📌 Step 11 — Compute Information Gain inside 'Rain' Subset")
+    st.markdown("## 📌 Step 11 — Compute Information Gain for **Rain** Branch")
 
     subsets = st.session_state.subsets
+    rain_key = next((k for k in subsets if k.lower() == "rain"), None)
+    rain = subsets.get(rain_key)
 
-    rain = None
-    for key in subsets:
-        if key.lower() == "rain":
-            rain = subsets[key]
-
-    st.write("### Rain Subset Data")
+    st.write("### 🌧 Rain Subset Data")
     st.dataframe(rain)
 
     features_remaining = ["temperature", "humidity", "windy"]
@@ -450,133 +455,130 @@ if step == 11:
 
     st.session_state.ig_rain = IG_rain
 
-    st.write("### Information Gains inside Rain Subset:")
+    st.write("### Information Gains in Rain Subset:")
     st.write(IG_rain)
 
-    best_feature = max(IG_rain, key=IG_rain.get)
-    st.success(f"🎉 Best Split for Rain = **{best_feature.title()}**")
+    best = max(IG_rain, key=IG_rain.get)
+    st.success(f"🎉 Best Feature for Rain = **{best.title()}**")
 
-    st.info("This feature gives maximum reduction in impurity for the Rain branch.")
+    st.info("We now have enough information to build the **final tree**.")
 
-# ---------------------------------------------------------
-# STEP 12 — Final ID3 Decision Tree (Graphical)
-# ---------------------------------------------------------
+# ============================================================
+# STEP 12 — Final Auto-Layout Decision Tree
+# ============================================================
 if step == 12:
-    st.markdown("## 🎉 Step 12 — Final Decision Tree (ID3 Algorithm)")
+    st.markdown("## 🎉 Step 12 — Final ID3 Decision Tree (Auto-Layout)")
     st.markdown("""
-    The full decision tree is now constructed using all previous steps.
-    This tree represents the learned rules from the dataset.
+    The tree is now constructed using the best splits found earlier.
+    We use an **auto-layout algorithm** to space nodes cleanly.
     """)
 
-    # Build compact node structure
-    nodes = {
+    # --------------------------------------------------------
+    # Build full tree structure
+    # --------------------------------------------------------
+    tree = {
         "root": {
             "text": "Outlook",
-            "x": 0.5,
-            "y": 0.92
+            "children": ["Sunny", "Rain", "Overcast"]
         },
-        # First-level branches
+
+        # -- Sunny branch --
         "Sunny": {
-            "text": "Sunny\n→ Humidity",
-            "x": 0.25,
-            "y": 0.65
+            "text": f"Sunny → {max(st.session_state.ig_sunny, key=st.session_state.ig_sunny.get).title()}",
+            "children": ["High", "Normal"]
         },
-        "Rain": {
-            "text": "Rain\n→ Windy",
-            "x": 0.50,
-            "y": 0.65
-        },
-        "Overcast": {
-            "text": "Overcast\n→ Yes",
-            "x": 0.75,
-            "y": 0.65
-        },
-        # Sunny branch children
         "High": {
             "text": "High → No",
-            "x": 0.15,
-            "y": 0.35
+            "children": []
         },
         "Normal": {
             "text": "Normal → Yes",
-            "x": 0.35,
-            "y": 0.35
+            "children": []
         },
-        # Rain branch children
+
+        # -- Rain branch --
+        "Rain": {
+            "text": f"Rain → {max(st.session_state.ig_rain, key=st.session_state.ig_rain.get).title()}",
+            "children": ["WindyTrue", "WindyFalse"]
+        },
         "WindyTrue": {
-            "text": "Windy = True → No",
-            "x": 0.45,
-            "y": 0.35
+            "text": "Windy=True → No",
+            "children": []
         },
         "WindyFalse": {
-            "text": "Windy = False → Yes",
-            "x": 0.55,
-            "y": 0.35
+            "text": "Windy=False → Yes",
+            "children": []
+        },
+
+        # -- Overcast branch --
+        "Overcast": {
+            "text": "Overcast → Yes",
+            "children": []
         }
     }
 
-    edges = [
-        ("root", "Sunny"),
-        ("root", "Rain"),
-        ("root", "Overcast"),
-        ("Sunny", "High"),
-        ("Sunny", "Normal"),
-        ("Rain", "WindyTrue"),
-        ("Rain", "WindyFalse")
-    ]
-
-    fig = draw_tree(nodes, edges, "Final ID3 Decision Tree")
+    # --------------------------------------------------------
+    # Draw Tree
+    # --------------------------------------------------------
+    fig = draw_auto_tree(tree, "Final ID3 Decision Tree")
     st.pyplot(fig)
 
-    st.success("🎯 The final tree is complete! Students can now use it for prediction.")
+    st.success("🎯 Tree Construction Complete!")
 
 
-    # -----------------------------------------------------
-    # Prediction Section
-    # -----------------------------------------------------
-    st.markdown("## 🔮 Try Prediction Using the Learned Tree")
+    # ========================================================
+    # PREDICTION UI
+    # ========================================================
+    st.markdown("## 🔮 Try Prediction Using This Tree")
 
     col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        outlook = st.selectbox("Outlook", ["Sunny", "Rain", "Overcast"])
-
-    with col2:
-        temperature = st.selectbox("Temperature", df["temperature"].unique())
-
-    with col3:
-        humidity = st.selectbox("Humidity", df["humidity"].unique())
-
-    with col4:
-        windy = st.selectbox("Windy", df["windy"].unique())
+    outlook = col1.selectbox("Outlook", df["outlook"].unique())
+    temperature = col2.selectbox("Temperature", df["temperature"].unique())
+    humidity = col3.selectbox("Humidity", df["humidity"].unique())
+    windy = col4.selectbox("Windy", df["windy"].unique())
 
     if st.button("Predict Outcome"):
-        st.markdown("### 🧠 Decision Path Followed:")
+        st.markdown("### 🧠 Decision Path:")
 
-        if outlook == "Overcast":
+        # --- Overcast branch ---
+        if outlook.lower() == "overcast":
             st.write("→ Outlook = Overcast ⇒ **Play = Yes**")
-            st.success("🎉 Final Prediction: **YES**")
-        elif outlook == "Sunny":
+            st.success("Prediction: YES")
+
+        # --- Sunny branch ---
+        elif outlook.lower() == "sunny":
             st.write("→ Outlook = Sunny")
-            if humidity == "High":
-                st.write("→ Humidity = High ⇒ **Play = No**")
-                st.error("Prediction: **NO**")
-            else:
-                st.write("→ Humidity ≠ High ⇒ **Play = Yes**")
-                st.success("Prediction: **YES**")
-        elif outlook == "Rain":
+            best_sunny = max(st.session_state.ig_sunny, key=st.session_state.ig_sunny.get)
+
+            if best_sunny == "humidity":
+                st.write("→ Split on Humidity")
+
+                if str(humidity).lower() == "high":
+                    st.write("→ Humidity = High ⇒ **Play = No**")
+                    st.error("Prediction: NO")
+                else:
+                    st.write("→ Humidity = Normal ⇒ **Play = Yes**")
+                    st.success("Prediction: YES")
+
+        # --- Rain branch ---
+        elif outlook.lower() == "rain":
             st.write("→ Outlook = Rain")
-            if windy == "True" or windy == True:
-                st.write("→ Windy = True ⇒ **Play = No**")
-                st.error("Prediction: **NO**")
-            else:
-                st.write("→ Windy = False ⇒ **Play = Yes**")
-                st.success("Prediction: **YES**")
+            best_rain = max(st.session_state.ig_rain, key=st.session_state.ig_rain.get)
+
+            if best_rain == "windy":
+                st.write("→ Split on Windy")
+
+                if str(windy).lower() in ["true", "yes", "1"]:
+                    st.write("→ Windy = True ⇒ **Play = No**")
+                    st.error("Prediction: NO")
+                else:
+                    st.write("→ Windy = False ⇒ **Play = Yes**")
+                    st.success("Prediction: YES")
 
 
-# ---------------------------------------------------------
-# Step Navigation Buttons
-# ---------------------------------------------------------
+# ============================================================
+# NAVIGATION CONTROLS (always visible)
+# ============================================================
 col_prev, col_next = st.columns(2)
 
 with col_prev:
