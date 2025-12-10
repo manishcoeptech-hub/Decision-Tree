@@ -1,172 +1,299 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import math
 import matplotlib.pyplot as plt
-from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-import seaborn as sns
 
-st.title("Decision Tree Classifier Lab — Weather Dataset (Categorical)")
+st.set_page_config(layout="wide")
+st.title("🌳 ID3 Decision Tree — Step-by-Step Simulator (Weather Dataset)")
 
-# -------------------------------------------------------------------------
-# TABS
-# -------------------------------------------------------------------------
-theory_tab, lab_tab = st.tabs(["📘 Theory", "🧪 Lab Activity"])
+# ==========================================================
+# Utility Functions
+# ==========================================================
 
-# -------------------------------------------------------------------------
-# THEORY TAB
-# -------------------------------------------------------------------------
-with theory_tab:
-    st.header("📘 Theory of Decision Trees (Categorical Data)")
-
-    st.markdown("""
-### 🌳 What is a Decision Tree?
-
-A **Decision Tree** is a flowchart-like structure used for classification.  
-It works by repeatedly asking questions and splitting the dataset.
-
-Example:
-If Outlook = Sunny AND Humidity = High → Play = No
-If Outlook = Overcast → Always Play
-If Windy = True → May Not Play
+def entropy(counts):
+    """Compute entropy given class counts."""
+    total = sum(counts.values())
+    ent = 0
+    for c in counts.values():
+        if c != 0:
+            p = c / total
+            ent -= p * math.log2(p)
+    return ent
 
 
----
+def compute_information_gain(df, feature, target="play"):
+    """Compute the IG of splitting df on 'feature'."""
+    parent_counts = df[target].value_counts().to_dict()
+    parent_entropy = entropy(parent_counts)
 
-## 🧮 Splitting Criteria
+    values = df[feature].unique()
+    weighted_entropy = 0
+    subsets = {}
 
-### 1️⃣ Gini Index  
-\[
-Gini = 1 - \sum_{i=1}^{n} (p_i)^2
-\]
+    for v in values:
+        subset = df[df[feature] == v]
+        subsets[v] = subset
+        subset_counts = subset[target].value_counts().to_dict()
+        weighted_entropy += (len(subset) / len(df)) * entropy(subset_counts)
 
-### 2️⃣ Entropy  
-\[
-Entropy = - \sum_{i=1}^{n} p_i \log_2(p_i)
-\]
+    IG = parent_entropy - weighted_entropy
+    return parent_entropy, weighted_entropy, IG, subsets
 
-### 3️⃣ Information Gain  
-\[
-IG = Entropy_{parent} - \sum \frac{n_{child}}{n_{parent}} Entropy_{child}
-\]
 
----
+def draw_tree(nodes, edges, title="Decision Tree"):
+    """
+    Draws a compact tree.
+    nodes = dict(node_id -> {"text": "...", "x": float, "y": float})
+    edges = list of (parent_id, child_id)
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.set_title(title, fontsize=16)
+    ax.axis("off")
 
-## 🎯 Why Decision Trees?
+    # Draw edges first
+    for (p, c) in edges:
+        x1, y1 = nodes[p]["x"], nodes[p]["y"]
+        x2, y2 = nodes[c]["x"], nodes[c]["y"]
+        ax.plot([x1, x2], [y1, y2], color="black")
 
-- Easy to visualize  
-- Works with categorical data  
-- Requires little preprocessing  
-- Students can interpret rules easily  
+    # Draw nodes
+    for node_id, node in nodes.items():
+        x, y = node["x"], node["y"]
+        text = node["text"]
 
----
-
-## 🌦️ Real-Life Examples
-
-- Predicting rain  
-- Whether a person will buy a product  
-- Approving a bank loan  
-- Diagnosing a disease  
-""")
-
-# -------------------------------------------------------------------------
-# LAB TAB (CSV Upload Required)
-# -------------------------------------------------------------------------
-with lab_tab:
-
-    st.header("🧪 Upload Weather Dataset (Categorical)")
-
-    uploaded_file = st.file_uploader("Upload CSV containing Outlook, Temperature, Humidity, Windy, Play", type=["csv"])
-
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-
-        # Clean column names
-        df.columns = df.columns.str.strip().str.lower()
-
-        required_cols = ["outlook", "temperature", "humidity", "windy", "play"]
-
-        if not all(col in df.columns for col in required_cols):
-            st.error("❌ CSV must contain these columns: Outlook, Temperature, Humidity, Windy, Play")
-            st.stop()
-
-        st.subheader("📄 Uploaded Dataset")
-        st.dataframe(df)
-
-        # Encode categorical columns
-        encoder = LabelEncoder()
-        encoded_df = df.copy()
-        for col in required_cols:
-            encoded_df[col] = encoder.fit_transform(encoded_df[col])
-
-        X = encoded_df[["outlook", "temperature", "humidity", "windy"]]
-        y = encoded_df["play"]
-
-        # Train-test split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.3, random_state=42
+        ax.text(
+            x, y, text,
+            ha="center", va="center",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="#eef", edgecolor="black")
         )
 
-        model = DecisionTreeClassifier(criterion="entropy", random_state=42)
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
+    return fig
 
-        # Accuracy
-        st.subheader("📊 Model Accuracy")
-        st.write(f"**Accuracy:** {accuracy_score(y_test, y_pred):.3f}")
 
-        # Confusion Matrix
-        st.subheader("🔢 Confusion Matrix")
-        cm = confusion_matrix(y_test, y_pred)
+# ==========================================================
+# Step Management
+# ==========================================================
+if "step" not in st.session_state:
+    st.session_state.step = 1
 
-        fig_cm, ax_cm = plt.subplots()
-        sns.heatmap(cm, annot=True, cmap="Greens", fmt="g")
-        ax_cm.set_xlabel("Predicted")
-        ax_cm.set_ylabel("Actual")
-        st.pyplot(fig_cm)
+def next_step():
+    if st.session_state.step < 12:
+        st.session_state.step += 1
 
-        # Classification Report
-        st.subheader("📑 Classification Report")
-        st.text(classification_report(y_test, y_pred))
+def prev_step():
+    if st.session_state.step > 1:
+        st.session_state.step -= 1
 
-        # Text tree
-        st.subheader("🌳 Text-based Decision Tree")
-        rules = export_text(model, feature_names=list(X.columns))
-        st.text(rules)
 
-        # Graphical tree
-        st.subheader("🖼️ Graphical Decision Tree")
-        fig_dt, ax_dt = plt.subplots(figsize=(18, 10))
-        plot_tree(model, feature_names=X.columns, class_names=["No", "Yes"], filled=True)
-        st.pyplot(fig_dt)
+# ==========================================================
+# FILE UPLOAD
+# ==========================================================
+uploaded = st.file_uploader("Upload Weather CSV (Outlook,Temperature,Humidity,Windy,Play)", type=["csv"])
 
-        # Prediction
-        st.subheader("🔮 Predict Play (Yes/No)")
+if not uploaded:
+    st.warning("Please upload the CSV to begin.")
+    st.stop()
 
-        outlook = st.selectbox("Outlook", df["outlook"].unique())
-        temperature = st.selectbox("Temperature", df["temperature"].unique())
-        humidity = st.selectbox("Humidity", df["humidity"].unique())
-        windy = st.selectbox("Windy", df["windy"].unique())
+df = pd.read_csv(uploaded)
+df.columns = df.columns.str.strip().str.lower()
 
-        if st.button("Predict"):
-            # Convert user-friendly values back to encoded
-            user_df = pd.DataFrame({
-                "outlook": [outlook],
-                "temperature": [temperature],
-                "humidity": [humidity],
-                "windy": [windy]
-            })
+required = ["outlook","temperature","humidity","windy","play"]
+if not all(col in df.columns for col in required):
+    st.error("CSV must contain: Outlook, Temperature, Humidity, Windy, Play")
+    st.stop()
 
-            # Encode user input using same encoder
-            for col in user_df.columns:
-                user_df[col] = LabelEncoder().fit(df[col]).transform(user_df[col])
 
-            prediction = model.predict(user_df)[0]
-            result = "Yes" if prediction == 1 else "No"
+# ==========================================================
+# MAIN 12-STEP LOGIC
+# ==========================================================
+step = st.session_state.step
 
-            st.success(f"🌤️ **Play? → {result}**")
+st.subheader(f"🪜 Step {step} of 12")
 
+# ----------------------------
+# STEP 1: Parent Entropy
+# ----------------------------
+if step == 1:
+    st.markdown("### 📌 Step 1 — Compute Parent Entropy")
+    counts = df["play"].value_counts().to_dict()
+
+    st.write("#### Class Counts:")
+    st.write(counts)
+
+    ent = entropy(counts)
+    st.latex(r"Entropy = -\sum p_i \log_2(p_i)")
+    st.write(f"### 👉 Parent Entropy = **{ent:.4f}**")
+
+    st.info("This entropy measures impurity of target variable (Play).")
+
+# ----------------------------
+# STEPS 2–5: Information Gain
+# ----------------------------
+features = ["outlook", "temperature", "humidity", "windy"]
+
+if step in [2,3,4,5]:
+    feature = features[step-2]
+    st.markdown(f"### 📌 Step {step} — Compute Information Gain for **{feature.title()}**")
+
+    parent_entropy, weighted_entropy, IG, subsets = compute_information_gain(df, feature)
+
+    st.write("#### Subset Entropies:")
+    for v, subset in subsets.items():
+        c = subset["play"].value_counts().to_dict()
+        st.write(f"**{feature.title()} = {v}** → Entropy = {entropy(c):.4f} (samples={len(subset)})")
+
+    st.write("---")
+    st.write(f"Weighted Entropy = **{weighted_entropy:.4f}**")
+    st.write(f"### 👉 Information Gain = **{IG:.4f}**")
+
+    st.info("Higher IG means the feature is better for splitting.")
+
+# ----------------------------
+# STEP 6: Choose Root Node
+# ----------------------------
+if step == 6:
+    st.markdown("### 📌 Step 6 — Select Best Feature (Root)")
+
+    IGs = {}
+    for f in features:
+        _, _, ig, _ = compute_information_gain(df, f)
+        IGs[f] = ig
+
+    st.write("### Information Gains:")
+    st.write(IGs)
+
+    root = max(IGs, key=IGs.get)
+    st.success(f"🎉 Best Feature = **{root.title()}** (Root Node)")
+
+    # Draw root-only tree
+    nodes = {
+        "root": {"text": f"{root.title()}\nEntropy={entropy(df['play'].value_counts()):.3f}",
+                 "x": 0.5, "y": 0.9}
+    }
+    edges = []
+    fig = draw_tree(nodes, edges, "Initial Root Node")
+    st.pyplot(fig)
+
+# ----------------------------
+# STEP 7: Create Root Branches
+# ----------------------------
+if step == 7:
+    st.markdown("### 📌 Step 7 — Create Root Branches")
+
+    IGs = {f: compute_information_gain(df, f)[2] for f in features}
+    root = max(IGs, key=IGs.get)
+
+    children = df[root].unique()
+
+    st.write(f"Root feature: **{root.title()}**")
+    st.write("Branches:", children)
+
+    # Draw partial tree
+    nodes = {
+        "root": {"text": root.title(), "x": 0.5, "y": 0.9}
+    }
+    edges = []
+
+    x_positions = np.linspace(0.2, 0.8, len(children))
+    for i, c in enumerate(children):
+        nodes[c] = {"text": f"{c}", "x": x_positions[i], "y": 0.6}
+        edges.append(("root", c))
+
+    fig = draw_tree(nodes, edges, "Root With Branches")
+    st.pyplot(fig)
+
+# ----------------------------
+# STEP 8–11: Sunny & Rain Subsets
+# ----------------------------
+
+# We reuse root
+IGs = {f: compute_information_gain(df, f)[2] for f in features}
+root = max(IGs, key=IGs.get)
+subsets = {v: df[df[root] == v] for v in df[root].unique()}
+
+# Sunny branch
+if step == 8:
+    st.markdown("### 📌 Step 8 — Compute Entropy of Sunny Subset")
+    sunny = subsets.get("Sunny") or subsets.get("sunny")
+    if sunny is None:
+        st.error("Sunny not found in dataset.")
     else:
-        st.info("Please upload a CSV file to continue.")
+        c = sunny["play"].value_counts().to_dict()
+        st.write("Sunny subset:", sunny)
+        st.write("Counts:", c)
+        st.write(f"### 👉 Entropy(Sunny) = **{entropy(c):.4f}**")
+
+if step == 9:
+    st.markdown("### 📌 Step 9 — Compute IG on Sunny Subset (Humidity Wins)")
+    sunny = subsets.get("Sunny") or subsets.get("sunny")
+
+    # Compute IG for Temperature/Humidity/Windy only
+    st.write("Sunny subset IG calculations:")
+    IG_sunny = {}
+    for f in ["temperature","humidity","windy"]:
+        _, _, ig, _ = compute_information_gain(sunny, f)
+        IG_sunny[f] = ig
+    st.write(IG_sunny)
+    best = max(IG_sunny, key=IG_sunny.get)
+    st.success(f"Best feature for Sunny = **{best.title()}**")
+
+if step == 10:
+    st.markdown("### 📌 Step 10 — Entropy of Rain Subset")
+    rain = subsets.get("Rain") or subsets.get("rain")
+    c = rain["play"].value_counts().to_dict()
+    st.write(rain)
+    st.write("Counts:", c)
+    st.write(f"### 👉 Entropy(Rain) = **{entropy(c):.4f}**")
+
+if step == 11:
+    st.markdown("### 📌 Step 11 — Compute IG on Rain Subset (Windy Wins)")
+    rain = subsets.get("Rain") or subsets.get("rain")
+    IG_rain = {}
+    for f in ["temperature","humidity","windy"]:
+        _, _, ig, _ = compute_information_gain(rain, f)
+        IG_rain[f] = ig
+    st.write(IG_rain)
+    best = max(IG_rain, key=IG_rain.get)
+    st.success(f"Best feature for Rain = **{best.title()}**")
+
+# ----------------------------
+# STEP 12: Final Tree
+# ----------------------------
+if step == 12:
+    st.markdown("### 🎉 Step 12 — Final ID3 Decision Tree")
+
+    # Draw final compact tree
+    nodes = {
+        "root": {"text": "Outlook", "x": 0.5, "y": 0.9},
+        "Sunny": {"text": "Sunny\n→ Humidity", "x": 0.25, "y": 0.6},
+        "Rain": {"text": "Rain\n→ Windy", "x": 0.5, "y": 0.6},
+        "Overcast": {"text": "Overcast\n→ Yes", "x": 0.75, "y": 0.6},
+        "High": {"text": "High → No", "x": 0.15, "y": 0.3},
+        "Normal": {"text": "Normal → Yes", "x": 0.35, "y": 0.3},
+        "WindyTrue": {"text": "Windy=True → No", "x": 0.45, "y": 0.3},
+        "WindyFalse": {"text": "Windy=False → Yes", "x": 0.55, "y": 0.3},
+    }
+
+    edges = [
+        ("root","Sunny"), ("root","Rain"), ("root","Overcast"),
+        ("Sunny","High"), ("Sunny","Normal"),
+        ("Rain","WindyTrue"), ("Rain","WindyFalse")
+    ]
+
+    fig = draw_tree(nodes, edges, "Final ID3 Tree")
+    st.pyplot(fig)
+
+    st.success("Tree construction complete! Now students understand ID3 step-by-step.")
+
+# ==========================================================
+# NAVIGATION
+# ==========================================================
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("⬅ Previous Step"):
+        prev_step()
+with col2:
+    if st.button("Next Step ➡"):
+        next_step()
