@@ -300,7 +300,7 @@ if step == 5:
     st.write(f"### 👉 IG(Windy) = **{IG:.4f}**")
 
 # ============================================================
-# STEP 6 — Select Best Feature as Root Node
+# STEP 6 — Select Best Feature as Root Node + Show Tree
 # ============================================================
 if step == 6:
     st.markdown("## 📌 Step 6 — Select Best Feature (Root Node)")
@@ -318,6 +318,18 @@ if step == 6:
 
     st.info("This feature has the maximum Information Gain, so it becomes the root of the tree.")
 
+    # 🔹 Show tree with ONLY the root node
+    tree = {
+        "root": {
+            "text": root_feature.title(),
+            "children": []
+        }
+    }
+
+    fig = draw_auto_tree(tree, "Tree After Selecting Root")
+    st.pyplot(fig)
+
+
 
 # ============================================================
 # STEP 7 — Split Dataset into Branches Based on Root Feature
@@ -326,7 +338,6 @@ if step == 7:
     root = st.session_state.root_feature
     st.markdown(f"## 📌 Step 7 — Split Data on Root Feature **{root.title()}**")
 
-    # Unique values become branches
     branch_values = df[root].unique().tolist()
     st.write("### Branch Values:", branch_values)
 
@@ -343,6 +354,24 @@ if step == 7:
     Each unique value under the root feature creates a branch.
     Next, we analyze the **Sunny** and **Rain** subsets to build the tree layer by layer.
     """)
+
+    # 🔹 Show tree: root + 1st level branches
+    tree = {
+        "root": {
+            "text": root.title(),
+            "children": [str(v) for v in branch_values]
+        }
+    }
+
+    for v in branch_values:
+        tree[str(v)] = {
+            "text": str(v),
+            "children": []
+        }
+
+    fig = draw_auto_tree(tree, "Tree After Creating Root Branches")
+    st.pyplot(fig)
+
 
 # ============================================================
 # STEP 8 — Entropy of Sunny Subset
@@ -375,7 +404,7 @@ if step == 8:
 
 
 # ============================================================
-# STEP 9 — IG inside Sunny Subset
+# STEP 9 — IG inside Sunny Subset + Update Tree
 # ============================================================
 if step == 9:
     st.markdown("## 📌 Step 9 — Compute Information Gain for **Sunny** Branch")
@@ -407,6 +436,47 @@ if step == 9:
     best = max(IG_sunny, key=IG_sunny.get)
     st.success(f"🎉 Best Feature for Sunny = **{best.title()}**")
 
+    st.info("Now we split the Sunny branch using this best feature, creating new leaf nodes.")
+
+    # 🔹 Build partial tree with Sunny split
+    root = st.session_state.root_feature
+    subsets = st.session_state.subsets
+    branch_values = list(subsets.keys())
+
+    tree = {
+        "root": {
+            "text": root.title(),
+            "children": [str(v) for v in branch_values]
+        }
+    }
+
+    # First-level branch nodes
+    for v in branch_values:
+        tree[str(v)] = {
+            "text": str(v),
+            "children": []
+        }
+
+    # Sunny children: values of best feature (e.g. Humidity = High/Normal)
+    sunny_children_ids = []
+    for val in sunny[best].unique():
+        sub = sunny[sunny[best] == val]
+        counts = sub["play"].value_counts()
+        majority = counts.idxmax()
+        node_id = f"{best}_{val}"
+        sunny_children_ids.append(node_id)
+        tree[node_id] = {
+            "text": f"{best.title()} = {val}\n→ {majority}",
+            "children": []
+        }
+
+    # Attach children to Sunny branch
+    tree[str(sunny_key)]["children"] = sunny_children_ids
+
+    fig = draw_auto_tree(tree, "Tree After Splitting Sunny Branch")
+    st.pyplot(fig)
+
+
 
 # ============================================================
 # STEP 10 — Entropy of Rain Subset
@@ -434,7 +504,7 @@ if step == 10:
 
 
 # ============================================================
-# STEP 11 — IG inside Rain Subset
+# STEP 11 — IG inside Rain Subset + Update Tree
 # ============================================================
 if step == 11:
     st.markdown("## 📌 Step 11 — Compute Information Gain for **Rain** Branch")
@@ -458,10 +528,74 @@ if step == 11:
     st.write("### Information Gains in Rain Subset:")
     st.write(IG_rain)
 
-    best = max(IG_rain, key=IG_rain.get)
-    st.success(f"🎉 Best Feature for Rain = **{best.title()}**")
+    best_rain = max(IG_rain, key=IG_rain.get)
+    st.success(f"🎉 Best Feature for Rain = **{best_rain.title()}**")
 
-    st.info("We now have enough information to build the **final tree**.")
+    st.info("Now we split the Rain branch using this best feature, adding more leaf nodes.")
+
+    # 🔹 Rebuild full partial tree including Sunny & Rain splits
+    root = st.session_state.root_feature
+    subsets = st.session_state.subsets
+    branch_values = list(subsets.keys())
+
+    tree = {
+        "root": {
+            "text": root.title(),
+            "children": [str(v) for v in branch_values]
+        }
+    }
+
+    # ---------- First-level branches ----------
+    for v in branch_values:
+        tree[str(v)] = {
+            "text": str(v),
+            "children": []
+        }
+
+    # ---------- Sunny split (from stored IG) ----------
+    sunny_key = next((k for k in subsets if k.lower() == "sunny"), None)
+    sunny = subsets.get(sunny_key)
+    best_sunny = max(st.session_state.ig_sunny, key=st.session_state.ig_sunny.get)
+
+    sunny_children_ids = []
+    for val in sunny[best_sunny].unique():
+        sub = sunny[sunny[best_sunny] == val]
+        counts = sub["play"].value_counts()
+        majority = counts.idxmax()
+        node_id = f"{best_sunny}_{val}"
+        sunny_children_ids.append(node_id)
+        tree[node_id] = {
+            "text": f"{best_sunny.title()} = {val}\n→ {majority}",
+            "children": []
+        }
+    tree[str(sunny_key)]["text"] = f"{sunny_key} → {best_sunny.title()}"
+    tree[str(sunny_key)]["children"] = sunny_children_ids
+
+    # ---------- Rain split (new) ----------
+    rain_children_ids = []
+    for val in rain[best_rain].unique():
+        sub = rain[rain[best_rain] == val]
+        counts = sub["play"].value_counts()
+        majority = counts.idxmax()
+        node_id = f"{best_rain}_{val}"
+        rain_children_ids.append(node_id)
+        tree[node_id] = {
+            "text": f"{best_rain.title()} = {val}\n→ {majority}",
+            "children": []
+        }
+    tree[str(rain_key)]["text"] = f"{rain_key} → {best_rain.title()}"
+    tree[str(rain_key)]["children"] = rain_children_ids
+
+    # ---------- Overcast leaf ----------
+    overcast_key = next((k for k in subsets if k.lower() == "overcast"), None)
+    if overcast_key is not None:
+        over = subsets[overcast_key]
+        counts_over = over["play"].value_counts()
+        majority_over = counts_over.idxmax()
+        tree[str(overcast_key)]["text"] = f"{overcast_key} → {majority_over}"
+
+    fig = draw_auto_tree(tree, "Tree After Splitting Rain Branch")
+    st.pyplot(fig)
 
 # ============================================================
 # STEP 12 — Final Auto-Layout Decision Tree
